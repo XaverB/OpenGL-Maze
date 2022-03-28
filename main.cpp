@@ -1,17 +1,22 @@
-/*---------------------------------------------------------------------------
- * Title: Computer Graphics Lab 2 - Meshes and Transformations
- * Author: Christoph Anthes
- * Version: 1.0 (SS22)
- * Time to complete: 90 minutes
+﻿/*---------------------------------------------------------------------------
+ * Title: GG-exercise1-G2
+ * Author: Buttinger Xaver - S2010307005
+ * Version: 1.0
+ * Time to complete: 15h
  * Additional material: slides, course notes
  *------------------------------------------------------------------------- */
+
 #include "GL/freeglut.h"
 #include <iostream>
 #include <time.h>
 #include "math.h"
 #include "main.h"
 
-#define LOG_POSITION 1
+ // ---------------------------------------------------------------------- 
+ //						DEFINES
+ // ----------------------------------------------------------------------
+
+#define LOG_POSITION 0
 #define LOG_MOUSE 0
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
@@ -29,12 +34,35 @@
 #define EPSILON (0.00000005f)
 #define ISEQUAL(x,y)     (fabs((x) - (y)) <= EPSILON)
 
+#define SOLID_OBJECTS_COUNT 2
+#define CUSTOM_OBJECTS_COUNT 2
+
+#define JUMP_HEIGHT_MAX 1.f
+#define JUMP_ORIGIN 0.f
+#define JUMP_DELTA 0.03f
+#define JUMP_EPSILON 0.005f
+
+// ---------------------------------------------------------------------- 
+//						TYPEDEFS
+// ----------------------------------------------------------------------
+
+/// <summary>
+/// Function pointer typedef so we can pass different drawing functions (solid objects and custom objects) to our flexible_drawing function which takes care of transformations
+/// </summary>
+typedef void (*draw_function)(void);
+
 typedef struct point {
 	float x;
 	float y;
 	float z;
 } point;
 
+/// <summary>
+/// Struct for objects placed in the map. We are using this only for two solid and two custom objects atm.
+/// We will be using this struct for animations, distance detection and conditional draw if the object is hidden. 
+/// The walls are fix positioned and not represented as object struct.
+/// THe maze is built by using a matrix and not represented as object struct.
+/// </summary>
 typedef struct object {
 	point position_world;
 	float rotation_y_angle = 0.0f;
@@ -44,33 +72,55 @@ typedef struct object {
 } object;
 
 
-object objects[2];
-int objects_count = 2;
+// ---------------------------------------------------------------------- 
+//						Function definitions
+// ----------------------------------------------------------------------
 
-object custom_objects[2];
-int custom_objects_count = 2;
+void draw_solid_objects(void);
+void draw_solid_object(object* object_to_draw);
+void process_jump_up(void);
+void draw_custom_objects(void);
+void draw_walls(void);
+void draw_x(void);
+void draw_maze_cube(int i, int j);
+void process_jump_down(void);
+void process_jump();
+void draw_custom_object(object* object_to_draw);
+void init_callbacks();
+void init_window();
+void init(int argc, char** argv);
+void mouse_move_up_or_down(int ycoor);
+void mouse_move_left_or_right(int xcoor);
+void draw_x_from_primitives(float z);
+void rotate_object(object* object_to_rotate);
+void rotate_close_object(void);
+bool can_move(float x, float y, float z);
+float calculate_distance(float x, float z, float object_x, float object_z);
+void flexible_draw(object* object_to_draw, draw_function draw_fn);
+void do_draw_solid_object(void);
 
-int windowid; // the identifier of the GLUT window
+// ---------------------------------------------------------------------- 
+//						Variables
+// ----------------------------------------------------------------------
+
+/// <summary>
+/// Array holding the solid objects
+/// </summary>
+object objects[SOLID_OBJECTS_COUNT];
+
+/// <summary>
+/// Array holding the custom objects
+/// </summary>
+object custom_objects[CUSTOM_OBJECTS_COUNT];
+
+int windowid;
 int window_width = 800;
 int window_height = 600;
 
-
-GLfloat matrot[][4] = {          // a rotation matrix
-  { 0.707f, 0.707f, 0.0f, 0.0f}, // it performs a rotation around z
-  {-0.707f, 0.707f, 0.0f, 0.0f}, // in 45 degrees
-  { 0.0f,   0.0f,   1.0f, 0.0f},
-  { 0.0f,   0.0f,   0.0f, 1.0f}
-};
-
-GLfloat mattrans[][4] = {        // a translation matrix
-  { 1.0f, 0.0f,  0.0f, 0.0f},    // it performs a translation along the
-  { 0.0f, 1.0f,  0.0f, 0.0f},    // x-axis of 0.5 units and along
-  { 0.0f, 0.0f,  1.0f, 0.0f},    // the z-axis of -1.5 units
-  { 0.5f, 0.0f, -1.5f, 1.0f}
-};
-
-// this reprresents our maze
-// 1 means a block will be rendered, 0 is empty
+/// <summary>
+/// This matrix reprresents our maze
+/// 1 means a block will be rendered, 0 is empty
+/// </summary>
 bool maze[MAZE_DIMENSION][MAZE_DIMENSION] = {
 	{ 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, },
 	{ 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, },
@@ -84,24 +134,22 @@ bool maze[MAZE_DIMENSION][MAZE_DIMENSION] = {
 	{ 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, },
 };
 
-// Navigation variables - required for TASK 5
+// navigation variables
 GLfloat navX = 0.0f;
 GLfloat navZ = 9.5f; // we start 0.5 before the near wall
 GLfloat navY = 0.0f; // wee need this for jumping
 
-// Angle for cube rotation - required for TASK 6
-GLfloat angleCube = 0.0f;        //angle for cube1
-
-// Camera motion variables - required for HOMEOWRK HELPER
-GLdouble angle_left_right = 0.0f;          // angle of rotation for the camera direction
-GLdouble angle_up_down = 0.0f;
-GLdouble lx = 0.0f, lz = -1.0f, ly = 0.0f; // actual vector representing the camera's
-								// direction
 GLdouble x = 0.0f, z = 5.0f, y = 0.0f;    // XZ position of the camera
 
-time_t jump_start;
-GLdouble angle_jump = 0.0f;
+// Camera motion variables
+GLdouble angle_left_right = 0.0f;          // angle of rotation for the camera direction
+GLdouble angle_up_down = 0.0f;
+GLdouble lx = 0.0f, lz = -1.0f, ly = 0.0f; // actual vector representing the camera's direciton
 
+float mouse_x = 0.f;
+float mouse_y = 0.f;
+
+// states for jumping
 bool jump_up = false;
 bool jump_down = false;
 
@@ -110,11 +158,56 @@ float maze_offset_x = -4.75f;
 float maze_offset_y = 0.f;
 float maze_offset_z = -9.5f;
 
-float mouse_x = 0.f;
-float mouse_y = 0.f;
+// ---------------------------------------------------------------------- 
+//						INPUT EVENTS
+// ----------------------------------------------------------------------
 
-/*
-*/
+/// <summary>
+/// Keyboard function for movement, object interaction and exit
+/// </summary>
+void keyboard(unsigned char key, int xcoor, int ycoor) {
+	switch (key) {
+	case 'a':
+		if (can_move(navX - 0.1f, navY, navZ)) {
+			navX -= 0.1f;
+		}
+		break;
+	case 'd':
+		if (can_move(navX + 0.3f /*0.5f*/, navY, navZ)) {
+			navX += 0.1f;
+		}
+		else navX -= 0.15f;
+		break;
+	case 'w':
+		if (can_move(navX, navY, navZ - 0.1f)) {
+			navZ -= 0.1f;
+		}
+		else navZ += 0.15f;
+		break;
+	case 's':
+		if (can_move(navX, navY, navZ + 0.3f)) {
+			navZ += 0.1f;
+		}
+		else navZ -= 0.15f;
+		break;
+	case 'e':
+		rotate_close_object();
+		break;
+	case 32: // space
+		jump_up = true;
+		break;
+	case 27: // escape key
+		glutDestroyWindow(windowid);
+		exit(0);
+		break;
+	}
+	if (LOG_POSITION) {
+		std::cout << "Camera position: navX: " << navX << ", navZ " << navZ << std::endl;
+		std::cout << "target position: navX + lx: " << navX + lx << ", navZ + lz " << navZ + lz << std::endl;
+	}
+	glutPostRedisplay();
+}
+
 //Taken from http://www.lighthouse3d.com/tutorials/glut-tutorial/keyboard-example-moving-around-the-world/
 void processSpecialKeys(int key, int xcoor, int ycoor) {
 	float fraction = 0.1f;
@@ -140,42 +233,46 @@ void processSpecialKeys(int key, int xcoor, int ycoor) {
 		break;
 	}
 }
-/* Here we have an example to draw a bit nicer with our limited OpenGL
-   knowledge. First filled objects are drawn in black, at a smaller size.
-   Then the same object outlines are drawn in full size full size. Both
-   will be compared in the depth buffer and the front outlines will
-   remain. */
-void drawObjectAlt(void) {
-	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-	glPushMatrix(); //set where to start the current object transformations  
-	glRotatef(angleCube, 0.0, 1.0, 0.0);
-	glColor3f(0.0, 0.0, 0.0); //change cube1 to black
-	glScalef(0.99, 0.99, 0.99);
-	glutSolidCube(0.5);
-	glTranslatef(0, 0.5, 0); //move cube1 to the right
-	glScalef(0.99, 0.99, 0.99);
-	glutSolidSphere(0.25f, 20, 20);
-	glPopMatrix();
 
-	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	glPushMatrix(); //set where to start the current object transformations  
-	glRotatef(angleCube, 0.0, 1.0, 0.0);
-	glColor3f(0.0, 1.0, 0.0); //change cube1 to Green
-	glutSolidCube(0.5);
-	glTranslatef(0, 0.5, 0); //move cube1 to the right
-	glutSolidSphere(0.25f, 20, 20);
-	glPopMatrix();
+void mouse(int xcoor, int ycoor) {
+
+	mouse_move_left_or_right(xcoor);
+	mouse_move_up_or_down(ycoor);
+
+	if (LOG_MOUSE) {
+		std::cout << "mouse coordinates: x (" << xcoor << "), y (" << ycoor << ")" << std::endl;
+	}
+
+	mouse_x = window_width / 2.f;
+	mouse_y = window_height / 2.f;
+	// reset the mouse position to the middle of our screen
+	// without this, we would not be able to move endless in one direction,
+	// because the mouse would just leave our window 
+	glutWarpPointer(window_width / 2, window_height / 2);
 }
 
-float calculate_distance(float x, float z, float object_x, float object_z) {
-	return sqrt(pow(x /*+ lx*/ - object_x, 2) + sqrt(pow(z /*+ lz*/ - object_z, 2)));
-}
+// ---------------------------------------------------------------------- 
+//						UTIL
+// ----------------------------------------------------------------------
 
+///
+/// Checks if two points are closer than our defined DISTANCE_OFFSET_FOR_COLLISION.
+///  Usually used for Player to Object distance evaluation.
+/// 
 bool is_close(float x, float z, float object_x, float object_z) {
 	float distance = calculate_distance(x, z, object_x, object_z);
 	if (distance < 0) distance *= -1;
 
 	return distance < DISTANCE_OFFSET_FOR_COLLISION;
+}
+
+///
+/// Calculates the distance between two points in world coordinates.
+/// Usually used for Player to Object distance evaluation.
+/// (Thanks pythagoras)
+/// 
+float calculate_distance(float x, float z, float object_x, float object_z) {
+	return (float) sqrt(pow(x - object_x, 2) + sqrt(pow(z - object_z, 2))); // this conversion is no problem
 }
 
 
@@ -223,191 +320,62 @@ void mouse_move_up_or_down(int ycoor)
 	}
 }
 
-void mouse(int xcoor, int ycoor) {
+///
+/// This function should be used for drawing.
+/// We can pass a object and the according draw function and flexible_draw will take care of transformations.
+///
+void flexible_draw(object* object_to_draw, draw_function draw_fn) {
+	if (!object_to_draw->is_visible)
+		return;
 
-	mouse_move_left_or_right(xcoor);
-	mouse_move_up_or_down(ycoor);
+	glPushMatrix();
+	glTranslatef(object_to_draw->position_world.x, object_to_draw->position_world.y, object_to_draw->position_world.z);
+	glRotatef(object_to_draw->rotation_x_angle, 1.0f, 0.f, 0.f);
+	glRotatef(object_to_draw->rotation_y_angle, 0.0f, 1.f, 0.f);
+	draw_fn();
+	glPopMatrix();
 
-	if (LOG_MOUSE) {
-		std::cout << "mouse coordinates: x (" << xcoor << "), y (" << ycoor << ")" << std::endl;
-	}
-
-	mouse_x = window_width / 2;
-	mouse_y = window_height / 2;
-	// reset the mouse position to the middle of our screen
-	// without this, we would not be able to move endless in one direction,
-	// because the mouse would just leave our window 
-	glutWarpPointer(window_width / 2, window_height / 2);
 }
 
-void rotate_close_object(void) {
-	for (int i = 0; i < objects_count; i++) {
-		if (!is_close(navX, navZ, objects[i].position_world.x, objects[i].position_world.z))
-			continue;
+// ---------------------------------------------------------------------- 
+//				DRAW
+// ----------------------------------------------------------------------
 
-		time(&objects[i].rotation_begin);
-	}
 
-	for (int i = 0; i < custom_objects_count; i++) {
-		if (!is_close(navX, navZ, custom_objects[i].position_world.x, custom_objects[i].position_world.z))
-			continue;
+//  --- --- --- --- --- --- --- --- --- --- --- ---
+//					maze
+//  --- --- --- --- --- --- --- --- --- --- --- ---
+void draw_maze(void) {
+	glPushMatrix();
+	glTranslatef(maze_offset_x, maze_offset_y, maze_offset_z); // move the maze to it's starting position
 
-		time(&custom_objects[i].rotation_begin);
-	}
-}
-
-/* This is the keyboard function which is used to react on keyboard input.
-   It has to be registered as a callback in glutKeyboardFunc. Once a key is
-   pressed it will be invoked and the keycode as well as the current mouse
-   coordinates relative to the window origin are passed.
-   It acts on our FPS controls 'WASD' and the escape key. A simple output
-   to the keypress is printed in the console in case of 'WASD'. In case of
-   ESC the window is destroyed and the application is terminated. */
-void keyboard(unsigned char key, int xcoor, int ycoor) {
-	switch (key) {
-	case 'a':
-		if (can_move(navX - 0.1f, navY, navZ)) {
-			navX -= 0.1f;
+	for (int i = 0; i < 10; i++) {
+		for (int j = 0; j < 10; j++) {
+			if (maze[j][i]) {
+				draw_maze_cube(i, j);
+			}
 		}
-		break;
-	case 'd':
-		if (can_move(navX + 0.3f /*0.5f*/, navY, navZ)) {
-			navX += 0.1f;
-		}
-		else navX -= 0.15f;
-		break;
-	case 'w':
-		if (can_move(navX, navY, navZ - 0.1f)) {
-			navZ -= 0.1f;
-		}
-		else navZ += 0.15f;
-		break;
-	case 's':
-		if (can_move(navX, navY, navZ + 0.3f)) {
-			navZ += 0.1f;
-		}
-		/*else navZ -= 0.2f;*/
-		break;
-	case 'e':
-		rotate_close_object();
-		break;
-	case 32: // space
-		jump_up = true;
-		jump_start = time(0); // get time of jump start trigger
-		break;
-	case 27: // escape key
-		glutDestroyWindow(windowid);
-		exit(0);
-		break;
 	}
-	if (LOG_POSITION) {
-		std::cout << "Camera position: navX: " << navX << ", navZ " << navZ << std::endl;
-		std::cout << "target position: navX + lx: " << navX + lx << ", navZ + lz " << navZ + lz << std::endl;
-	}
-	glutPostRedisplay();
-}
-
-/* This function should be called when the window is resized. It has to be
-   registered as a callback in glutReshapeFunc. The function sets up the
-   correct perspective projection. Don't worry about it we will not go into
-   detail but we need it for correct perspective 3D rendering. */
-void reshapeFunc(int xwidth, int yheight) {
-	if (yheight == 0 || xwidth == 0) return;  // Nothing is visible, return
-
-	glMatrixMode(GL_PROJECTION); // Set a new projection matrix
-	glLoadIdentity();
-	// Angle of view: 40 degrees
-	// Near clipping plane distance: 0.5
-	// Far clipping plane distance: 20.0
-	gluPerspective(40.0f, (GLdouble)xwidth / (GLdouble)yheight, 0.5f, 100.0f);
-	glViewport(0, 0, xwidth, yheight);  // Use the whole window for rendering
-
-	window_width = xwidth;
-	window_height = yheight;
-}
-
-/* This is our first display function it will be used for drawing a 2D
-   triangle. The background is set to black and cleared, the current drawing
-   colour is set and the vertices of the triangle are defined. At the end the
-   buffers are flipped. */
-void renderPrimitives(void) {
-	glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // set background colour to black 
-	glClear(GL_COLOR_BUFFER_BIT);         // clear the colour buffer
-
-	glColor3f(0.1f, 0.2f, 0.3f);        // set the colour to grey
-	glBegin(GL_TRIANGLES);              // drawing using triangles
-	glVertex3f(0.0f, 1.0f, 0.0f);      // top
-	glVertex3f(-1.0f, -1.0f, 0.0f);    // bottom left
-	glVertex3f(1.0f, -1.0f, 0.0f);    // bottom right
-	glEnd();                            // finished drawing the triangle
-
-	/* Example 1 - Slide 5 */
-	glColor3f(1.0f, 0.0f, 0.0f);        // red
-	glBegin(GL_QUADS);                  // drawing using quads
-	glVertex2f(-0.5f, -0.5f);          // bottom left
-	glVertex2f(0.5f, -0.5f);          // bottom right
-	glVertex2f(0.5f, 0.5f);            // top right
-	glVertex2f(-0.5f, 0.5f);          // top left
-	glEnd();
-
-	/* Example 2 - Slide 5 */
-	glBegin(GL_QUADS);                  // drawing using quads
-	glColor3f(1.0f, 0.0f, 0.0f);      // red
-	glVertex2f(-0.5f, -0.5f);          // bottom left
-	glColor3f(0.0f, 1.0f, 0.0f);      // green
-	glVertex2f(0.5f, -0.5f);          // bottom right
-	glColor3f(0.0f, 0.0f, 1.0f);      // blue
-	glVertex2f(0.5f, 0.5f);            // top right
-	glColor3f(1.0f, 1.0f, 0.0f);      // yellow
-	glVertex2f(-0.5f, 0.5f);          // top left
-	glEnd();
-
-	// TASK 1:
-	glColor3f(1.0f, 1.0f, 0.0f);  // yellow
-	glBegin(GL_POLYGON);          // these vertices form a closed polygon
-	glVertex2f(0.4f, 0.2f);
-	glVertex2f(0.6f, 0.2f);
-	glVertex2f(0.7f, 0.4f);
-	glVertex2f(0.6f, 0.6f);
-	glVertex2f(0.4f, 0.6f);
-	glVertex2f(0.3f, 0.4f);
-	glEnd();
-	glutSwapBuffers();
-}
-
-/* This function will be used for composited objects and will be called from a
-   display function. */
-void draw_solid_object(void) { // TASK 4:
-	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-	glPushMatrix(); //set where to start the current object transformations  
-	glColor3f(0.0f, 1.0f, 0.0f);    // change cube1 to green
-	glutSolidCube(0.5f);            // cube
-	glTranslatef(0.0f, 0.5f, 0.0f); // move cube1 to the top
-	glutSolidSphere(0.25f, 20, 20); // sphere
 	glPopMatrix();
 }
 
-/* This function will replace the previous display function and will be used
-   for scene setup. */
-void render3DScene(void) {
-	glMatrixMode(GL_MODELVIEW);    // set the ModelView Matrix for scene setup
-	glClear(GL_COLOR_BUFFER_BIT);
-
-	glLoadIdentity();
-	glColor3f(0.0f, 1.0f, 0.0f);  // green
-	glTranslatef(0.0f, 0.0f, -1.5f);
-	glRotatef(45, 1.0f, 0.0f, 0.0f);
-	glutSolidCube(0.5f);
-
-	// TASK 2:
-	glutSolidSphere(0.1f, 20, 20);
-	glutSolidTorus(0.6f, 1.4f, 20, 20);
-
-	glutSwapBuffers();
+void draw_maze_cube(int i, int j)
+{
+	glPushMatrix();
+	glColor3f(0.9f, 0.9f, 0.9f);// grey
+	glTranslatef((float)i, 0.f, (float)j); // those conversions are no problem
+	glutSolidCube(MAZE_CUBE_SIZE);
+	glPopMatrix();
 }
 
-void draw_walls(void) {
+//  --- --- --- --- --- --- --- --- --- --- --- ---
+//					walls
+//  --- --- --- --- --- --- --- --- --- --- --- ---
 
+///
+///	This function will draw our walls
+///
+void draw_walls(void) {
 	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	glColor3f(0.9f, 0.9f, 0.9f);// grey
 	glBegin(GL_QUADS);  // drawing walls using quads
@@ -454,24 +422,69 @@ void draw_walls(void) {
 	glEnd();
 }
 
-void draw_object(object* object_to_draw) {
-	if (!object_to_draw->is_visible)
-		return;
+//  --- --- --- --- --- --- --- --- --- --- --- ---
+//					solid objects
+//  --- --- --- --- --- --- --- --- --- --- --- ---
 
+void draw_solid_objects(void)
+{
+	for (int i = 0; i < SOLID_OBJECTS_COUNT; i++) {
+		draw_solid_object(&objects[i]);
+	}
+	return;
+}
+
+
+void draw_solid_object(object* object_to_draw) {
+	flexible_draw(object_to_draw, do_draw_solid_object);
+}
+
+/// <summary>
+/// This function will draw our solid object (cube and a sphere on top of it)
+/// </summary>
+void do_draw_solid_object(void) {
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	glPushMatrix();
-	glTranslatef(object_to_draw->position_world.x, object_to_draw->position_world.y, object_to_draw->position_world.z);
-	glRotatef(object_to_draw->rotation_x_angle, 1.0f, 0.f, 0.f);
-	glRotatef(object_to_draw->rotation_y_angle, 0.0f, 1.f, 0.f);
-	draw_solid_object();
+	glColor3f(0.0f, 1.0f, 0.0f);
+	glutSolidCube(0.5f);
+	glTranslatef(0.0f, 0.5f, 0.0f);
+	glutSolidSphere(0.25f, 20, 20);
 	glPopMatrix();
 }
 
-void draw_objects(void)
+
+//  --- --- --- --- --- --- --- --- --- --- --- ---
+//			custom objects made of primitives
+//  --- --- --- --- --- --- --- --- --- --- --- ---
+void draw_custom_objects(void)
 {
-	for (int i = 0; i < objects_count; i++) {
-		draw_object(&objects[i]);
+	glColor3f(0.f, 0.f, 1.f);
+	for (int i = 0; i < CUSTOM_OBJECTS_COUNT; i++) {
+		draw_custom_object(&custom_objects[i]);
 	}
-	return;
+}
+
+/// <summary>
+/// Draws a single custom object (letter X)
+/// </summary>
+void draw_custom_object(object* object_to_draw) {
+	flexible_draw(object_to_draw, draw_x);
+}
+
+/// <summary>
+/// This will draw the letter x constructed by glVertexes
+/// </summary>
+void draw_x(void) {
+	glBegin(GL_LINE_LOOP);  // drawing walls using quads
+	glPushMatrix();
+
+	// near side
+	draw_x_from_primitives(0.1f);
+	// far side
+	draw_x_from_primitives(-0.1f);
+
+	glPopMatrix();
+	glEnd();
 }
 
 void draw_x_from_primitives(float z) {
@@ -491,152 +504,150 @@ void draw_x_from_primitives(float z) {
 	glVertex3f(-0.2f, 0.f, z);
 }
 
-void draw_x(void) {
-	glBegin(GL_LINE_LOOP);  // drawing walls using quads
-	glPushMatrix();
 
-	// near side
-	draw_x_from_primitives(0.1f);
-	// far side
-	draw_x_from_primitives(-0.1f);
-
-	glPopMatrix();
-	glEnd();
-}
-
-void draw_custom_object(object* object_to_draw) {
-	if (!object_to_draw->is_visible)
-		return;
-
-	glPushMatrix();
-	glColor3f(0.0f, 0.0f, 1.0f);
-	glTranslatef(object_to_draw->position_world.x, object_to_draw->position_world.y, object_to_draw->position_world.z);
-	glRotatef(object_to_draw->rotation_x_angle, 1.0f, 0.f, 0.f);
-	glRotatef(object_to_draw->rotation_y_angle, 0.0f, 1.f, 0.f);
-	draw_x();
-	glPopMatrix();
-}
-
-void draw_custom_objects(void)
-{
-	for (int i = 0; i < custom_objects_count; i++) {
-		draw_custom_object(&custom_objects[i]);
-	}
-	
-}
-
-void draw_maze_cube(int i, int j)
-{
-	glPushMatrix();
-	glColor3f(0.9f, 0.9f, 0.9f);// grey
-	glTranslatef(i, 0.f, j);
-	glutSolidCube(MAZE_CUBE_SIZE);
-	glPopMatrix();
-}
-
-void draw_maze(void) {
-	glPushMatrix();
-	glTranslatef(maze_offset_x, maze_offset_y, maze_offset_z); // move the maze to it's starting position
-
-	for (int i = 0; i < 10; i++) {
-		for (int j = 0; j < 10; j++) {
-			if (maze[j][i]) {
-				draw_maze_cube(i, j);
-			}
-		}
-	}
-	glPopMatrix();
-}
-
-/* This function will replace the previous display function and will be used
-   for rendering a cube and playing with transformations. */
+/// <summary>
+/// Our rendering function. Here we will draw all necessary game objects (solid objects, custom objects, walls and maze)
+/// </summary>
 void render(void) {
-	glMatrixMode(GL_MODELVIEW);
-	// glClear(GL_DEPTH_BUFFER_BIT); // Helper to be used with drawObjectAlt
-	glClear(GL_COLOR_BUFFER_BIT);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+	glMatrixMode(GL_MODELVIEW);
+	glEnable(GL_DEPTH_TEST);
 	glLoadIdentity();
 
-	gluLookAt(navX, navY, navZ,      // camera position
-		navX + lx, y + ly, navZ + lz,      // target position (at)
-		0.0f, 1.0f, 0.0f);     // up vector
+	gluLookAt(navX, navY, navZ,				// camera position
+		navX + lx, y + ly, navZ + lz,       // target position (at)
+		0.0f, 1.0f, 0.0f);				    // up vector
 
 	draw_walls();
-	draw_objects();
+	draw_solid_objects();
 	draw_maze();
 	draw_custom_objects();
+	
 	glutSwapBuffers();
 }
 
+// ---------------------------------------------------------------------- 
+//							JUMP
+// ----------------------------------------------------------------------
 
-
-void process_jump_up(float jump_delta, float jump_height_max, float epsilon)
+/// <summary>
+/// If the user pressed the space button, the state variable jump_up will be true.
+/// We then want to increase the jump properties until we reached the maximum. 
+/// Then jump_up will be set to false, but jump_down becomes true.
+/// We then want to decrease the jump properties.
+/// </summary>
+void process_jump(void)
 {
-	navY = MIN(navY + jump_delta, jump_height_max);
+	if (jump_up) {
+		process_jump_up();
+	}
+	else if (jump_down) {
+		process_jump_down();
+	}
+}
 
-	if ((jump_height_max - navY) < epsilon) { // we reached our maximum
+void process_jump_up(void)
+{
+	navY = MIN(navY + JUMP_DELTA, JUMP_HEIGHT_MAX);
+	bool maximum_reached = (JUMP_HEIGHT_MAX - navY) < JUMP_EPSILON;
+	if (maximum_reached) {
 		jump_up = false;
 		jump_down = true;
 	}
 }
 
-void process_jump_down(float jump_delta, float jump_origin, float epsilon)
+void process_jump_down(void)
 {
-	navY = MAX(navY - jump_delta, jump_origin);
-	if (navY < epsilon) {
+	navY = MAX(navY - JUMP_DELTA, JUMP_ORIGIN);
+	bool minimum_reached = navY < JUMP_EPSILON;
+	if (minimum_reached) {
 		jump_down = false;
-		navY = jump_origin;
+		navY = JUMP_ORIGIN;
 	}
 }
 
-void process_jump(void)
-{
-	float jump_delta = 0.03f; // we increase or decrease y every call by this value
-	float jump_height_max = 1.0f;
-	float epsilon = 0.005; // to compare floats
-	float jump_origin = 0.0f; // our jumping starting point. we wan't back to this y value after the jump is finished
+// ---------------------------------------------------------------------- 
+//				ROTATE and HIDE (Interaction with objects)
+// ----------------------------------------------------------------------
 
-	if (jump_up) {
-		process_jump_up(jump_delta, jump_height_max, epsilon);
+/// <summary>
+/// Will be called if user presses 'e'. Check if any object is near. If yes, set the rotation_begin timestamp so our idle function will rotate it.
+/// </summary>
+/// <param name=""></param>
+void rotate_close_object(void) {
+	for (int i = 0; i < SOLID_OBJECTS_COUNT; i++) {
+		if (!is_close(navX, navZ, objects[i].position_world.x, objects[i].position_world.z))
+			continue;
+
+		time(&objects[i].rotation_begin);
 	}
-	else if (jump_down) {
-		process_jump_down(jump_delta, jump_origin, epsilon);
+
+	for (int i = 0; i < CUSTOM_OBJECTS_COUNT; i++) {
+		if (!is_close(navX, navZ, custom_objects[i].position_world.x, custom_objects[i].position_world.z))
+			continue;
+
+		time(&custom_objects[i].rotation_begin);
 	}
 }
 
+/// <summary>
+/// Trys to rotate each available object
+/// </summary>
+void rotate_objects(void) {
+	for (int i = 0; i < SOLID_OBJECTS_COUNT; i++) {
+		rotate_object(&objects[i]);
+	}
+
+	for (int i = 0; i < CUSTOM_OBJECTS_COUNT; i++) {
+		rotate_object(&custom_objects[i]);
+	}
+}
+
+/// <summary>
+/// Rotates the passed object if rotation_begin time conditions are set.
+/// </summary>
 void rotate_object(object* object_to_rotate) {
 	time_t rawtime = time(NULL);
 	if (object_to_rotate->rotation_begin == NULL)
 		return;
 
 	double difference_seconds = difftime(rawtime, object_to_rotate->rotation_begin);
-	if (difference_seconds < 5)
+	if (difference_seconds < 3)
 		object_to_rotate->rotation_y_angle += 10.f;
 	else
 		object_to_rotate->is_visible = false;
 }
 
+// ---------------------------------------------------------------------- 
+//						IDLE (rotate and hide, jump)
+// ----------------------------------------------------------------------
 
-void rotate_objects(void) {
-	for (int i = 0; i < objects_count; i++) {
-		rotate_object(&objects[i]);
-	}
-
-	for (int i = 0; i < custom_objects_count; i++) {
-		rotate_object(&custom_objects[i]);
-	}
-}
-
-
-/* This function will registered as a callback with glutIdleFunc. Here it will
-   be constantly called and perform updates to realise an animation. */
 void idleFunc(void) {
-	//angleCube += 0.1f; // TASK 6:
 	rotate_objects();
 	process_jump();
 	glutPostRedisplay();
 }
 
+// ---------------------------------------------------------------------- 
+//						reshape
+// ----------------------------------------------------------------------
+
+void reshapeFunc(int xwidth, int yheight) {
+	if (yheight == 0 || xwidth == 0) return;
+
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(40.0f, (GLdouble)xwidth / (GLdouble)yheight, 0.5f, 100.0f);
+	glViewport(0, 0, xwidth, yheight);
+
+	window_width = xwidth;
+	window_height = yheight;
+}
+
+// ---------------------------------------------------------------------- 
+//						INIT
+// ----------------------------------------------------------------------
 void init_callbacks()
 {
 	glutReshapeFunc(reshapeFunc);
@@ -655,22 +666,20 @@ void init_window()
 	windowid = glutCreateWindow("Xavers first 3D game");
 }
 
-void init_object_data(void) {
+/// <summary>
+/// Here we define our solid object data which will be drawn during the rendering process
+/// </summary>
+void init_solid_object_data(void) {
 	object object1;
-
 	object1.rotation_x_angle = 0.0f;
 	object1.rotation_y_angle = 0.0f;
-
 	object1.position_world.x = 1.0f;
 	object1.position_world.y = -0.5f;
 	object1.position_world.z = 5.0f;
 
-
 	object object2;
-
 	object2.rotation_x_angle = 180;
 	object2.rotation_y_angle = 0.0f;
-
 	object2.position_world.x = -1.0f;
 	object2.position_world.y = .0f;
 	object2.position_world.z = 5.0f;
@@ -679,22 +688,21 @@ void init_object_data(void) {
 	objects[1] = object2;
 }
 
+/// <summary>
+/// Here we define our custom object data which will be drawn during the rendering process
+/// </summary>
 void init_custom_object_data() {
 	object object1;
-
 	object1.rotation_x_angle = 0.0f;
 	object1.rotation_y_angle = 0.0f;
-
 	object1.position_world.x = -1.0f;
 	object1.position_world.y = 0.f;
 	object1.position_world.z = 1.0f;
-
 
 	object object2;
 
 	object2.rotation_x_angle = 0;
 	object2.rotation_y_angle = 0.0f;
-
 	object2.position_world.x = 1.0f;
 	object2.position_world.y = .0f;
 	object2.position_world.z = 2.0f;
@@ -705,24 +713,43 @@ void init_custom_object_data() {
 
 void init(int argc, char** argv)
 {
-	init_object_data();
+	init_solid_object_data();
 	init_custom_object_data();
-	
 
 	glutInit(&argc, argv);
+	
+	glDepthFunc(GL_EQUAL);
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
+	glMatrixMode(GL_MODELVIEW);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	init_window();
 
-	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	glEnable(GL_CULL_FACE);
 
 	init_callbacks();
 
 	glutMainLoop();
 }
 
+void print_start(void) {
+	using std::cout;
+	using std::endl;
+	cout << "--------------------------------" << endl;
+	cout << " Xavers amazing 3D maze<< endl " << endl;
+	cout << "--------------------------------" << endl;
+	cout << "         Thanks OpenGL " << endl;
+	cout << "--------------------------------" << endl;
+	cout << "Move with w,a,s,d, space and mouse" << endl;
+	cout << "You can remove objects by pressing 'e' when you are really close to them" << endl;
+	cout << "You can walk through the walls in the first room, but not through maze walls!" << endl;
+	cout << "Have fun exploring the maze!" << endl;
+}
+
+// ---------------------------------------------------------------------- 
+//						MAIN
+// ----------------------------------------------------------------------
 int main(int argc, char** argv) {
+	print_start();
 	init(argc, argv);
 	return 0;
 }
